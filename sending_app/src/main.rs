@@ -1,28 +1,17 @@
-use std::str;
-use std::net::TcpStream;
-use std::io::{self,prelude::*,BufReader,Write};
+use tokio::net::TcpListener;
 
-fn main() -> io::Result<( )>{
-    // connect
-    // Struct used to start requests to the server.
-    // Check TcpStream Connection to the server
-    println!("\n Please Type what you want to send:");
-    let mut stream = TcpStream::connect("127.0.0.1:7878")?;
-    for _ in 0..1000 {
-        // Allow sender to enter message input 
-        let mut input = String::new();
-        // First access the input message and read it
-        io::stdin().read_line(&mut input).expect("Failed to read");
-        // Write the message so that the receiver can access it 
-        stream.write(input.as_bytes()).expect("failed to write");
-        // Add buffering so that the receiver can read messages from the stream
-        let mut reader =BufReader::new(&stream);
-        // Check if this input message values are u8
-        let mut buffer: Vec<u8> = Vec::new();
-        // Read input information
-        reader.read_until(b'\n',&mut buffer)?;
-       
-        println!("server received the message",);
+use std::io;
+
+async fn process_socket<T>(socket: T) {
+    // do work with socket here
+}
+
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:8182").await?;
+
+    loop {
+        let (socket, _) = listener.accept().await?;
+        process_socket(socket).await;
     }
-    Ok(())
 }

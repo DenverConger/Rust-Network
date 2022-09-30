@@ -1,53 +1,65 @@
-use std::io;
-use std::time;
-use std ::net::{TcpListener,TcpStream};
-use std::io::{Read,Write};
-use std::thread;
+use std::str;
+use std::sync::{Arc, Mutex};
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::RwLock;
+#[tokio::main]
+async fn main() {
+    // create balance wrapped in Arc and Mutex for cross thread safety
+    let information = Arc::new(Mutex::new(0.00f32));
+    let listener = TcpListener::bind("127.0.0.1:8181").await.unwrap();
 
-
-fn handle_sender(mut stream: TcpStream) -> io::Result<()>{
-    // Handle multiple access stream
-    let mut buf = [0;1024];
-    for _ in 0..1000{
-        // let the receiver get a message from a sender
-        let bytes_read = stream.read(&mut buf)?;
-        // sender stream in a mutable variable
-        if bytes_read == 0{
-            return Ok(());
-        }
-        stream.write(&buf[..bytes_read])?;
-        // Print acceptance message
-        //read, print the message sent
-        println!("{}",String::from_utf8_lossy(&buf));
-        // And you can sleep this connection with the connected sender
-        thread::sleep(time::Duration::from_secs(1));  
+    let vec2 = Arc::new(RwLock::new(vec![]));
+    
+    loop {
+        let (stream, _) = listener.accept().await.unwrap();
+        let vec1 = vec2.clone();
+        let stream2 = TcpStream::connect("127.0.0.1:8182").await.unwrap();
+        let information = information.clone();
+        tokio::spawn(async move {
+            handle_connection(stream,stream2,information, vec1.clone()).await;
+        });
     }
-    // success value
-    Ok(())
 }
 
-fn main() -> io::Result<()>{
-    // Enable port 7878 binding
-    let receiver_listener = TcpListener::bind("127.0.0.1:7878").expect("Failed and bind with the sender");
-    // Getting a handle of the underlying thread.
-    let mut thread_vec: Vec<thread::JoinHandle<()>> = Vec::new();
-    // listen to incoming connections messages and bind them to a sever socket address.
-    for stream in receiver_listener.incoming() {
-        let stream = stream.expect("failed");
-        // let the receiver connect with the sender
-        let handle = thread::spawn(move || {
-            //receiver failed to read from the stream
-            handle_sender(stream).unwrap_or_else(|error| eprintln!("{:?}",error))
-        });
-        
-        // Push messages in the order they are sent
-        thread_vec.push(handle);
-    }
+async fn handle_connection(mut stream: TcpStream,mut stream2: TcpStream, information: Arc<Mutex<f32>>, vec1: Arc<RwLock<Vec<f32>>>) {
 
-    for handle in thread_vec {
-        // return each single value Output contained in the heap
-        handle.join().unwrap();
-    }
-    // success value
-    Ok(())
+    let mut buffer = [0; 16];
+    stream.read(&mut buffer).await.unwrap();
+
+    let method_type = match str::from_utf8(&buffer[0..4]) {
+        Ok(v) => v,
+        Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
+    };
+    let contents = match method_type {
+        "GET " => {
+
+            format!("{{\"sensor info\": {}}}", information.lock().unwrap())
+        }
+        "POST" => {
+
+            let input: String = buffer[6..16]
+                .iter()
+                .take_while(|x| **x != 32u8)
+                .map(|x| *x as char)
+                .collect();
+            let sensor = input.parse::<f32>().unwrap();
+
+            let mut editable_users = vec1.write().await;
+            editable_users.push(sensor);
+            
+            
+            format!(r"{:?}", editable_users)
+        }
+        _ => {
+            panic!("Invalid HTTP method!")
+        }
+    };
+
+    let response = contents;
+    
+    stream2.write(response.as_bytes()).await.unwrap();
+    stream.flush().await.unwrap();
+    stream2.flush().await.unwrap();
 }
